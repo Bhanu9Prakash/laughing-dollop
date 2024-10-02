@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Video Transcoder</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+  <div class="bg-white p-8 rounded shadow-md w-full max-w-md">
+    <h1 class="text-2xl font-bold mb-4">Video Transcoder</h1>
+    <div class="mb-4">
+      <label class="block mb-2">Select Output Codec:</label>
+      <select id="outputCodec" class="w-full border rounded p-2">
+        <option value="video/mp4; codecs=avc1.42E01E, mp4a.40.2">H.264/AAC (MP4)</option>
+        <option value="video/webm; codecs=vp8, vorbis">VP8/Vorbis (WebM)</option>
+        <option value="video/webm; codecs=vp9, vorbis">VP9/Vorbis (WebM)</option>
+      </select>
+    </div>
+
+    <!-- Drag and Drop Area -->
+    <div id="dropArea" class="mb-4 w-full p-6 border-2 border-dashed border-gray-300 rounded text-center relative cursor-pointer">
+      <p id="dropAreaText" class="text-gray-500">Drag and drop a video file here or click to select a file</p>
+      <input type="file" id="fileInput" accept="video/*" class="absolute inset-0 opacity-0 cursor-pointer">
+    </div>
+
+    <button id="transcodeBtn" class="bg-blue-500 text-white px-4 py-2 rounded w-full">Transcode</button>
+    <div id="progressContainer" class="w-full bg-gray-200 rounded mt-4 hidden">
+      <div id="progressBar" class="bg-blue-500 text-xs leading-none py-1 text-center text-white rounded" style="width: 0%"></div>
+    </div>
+    <video id="outputVideo" controls class="mt-4 w-full hidden"></video>
+    <a id="downloadLink" href="#" download="output.mp4" class="mt-4 text-blue-500 underline hidden">Download Transcoded Video</a>
+  </div>
+
+  <!-- Notification Area -->
+  <div id="notification" class="fixed bottom-4 right-4 p-4 bg-green-500 text-white rounded shadow-md hidden">
+    Download started!
+  </div>
+
+  <script>
+    const dropArea = document.getElementById('dropArea');
+    const dropAreaText = document.getElementById('dropAreaText');
+    const fileInput = document.getElementById('fileInput');
+    const transcodeBtn = document.getElementById('transcodeBtn');
+    const outputVideo = document.getElementById('outputVideo');
+    const downloadLink = document.getElementById('downloadLink');
+    const outputCodecSelect = document.getElementById('outputCodec');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const notification = document.getElementById('notification');
+
+    let selectedFile = null;
+
+    // Drag and Drop Events
+    dropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropArea.classList.add('border-blue-500');
+    });
+
+    dropArea.addEventListener('dragleave', () => {
+      dropArea.classList.remove('border-blue-500');
+    });
+
+    dropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropArea.classList.remove('border-blue-500');
+      if (e.dataTransfer.files.length > 0) {
+        selectedFile = e.dataTransfer.files[0];
+        dropAreaText.textContent = selectedFile.name;
+        fileInput.files = e.dataTransfer.files; // Update fileInput.files
+      }
+    });
+
+    // File Input Change Event
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) {
+        selectedFile = fileInput.files[0];
+        dropAreaText.textContent = selectedFile.name;
+      }
+    });
+
+    transcodeBtn.addEventListener('click', async () => {
+      if (!selectedFile) {
+        alert('Please select a video file.');
+        return;
+      }
+
+      transcodeBtn.disabled = true;
+      transcodeBtn.textContent = 'Transcoding...';
+
+      const fileURL = URL.createObjectURL(selectedFile);
+
+      // Create a video element to read frames
+      const video = document.createElement('video');
+      video.src = fileURL;
+      video.crossOrigin = 'anonymous';
+
+      // Wait for video metadata to load
+      await new Promise((resolve, reject) => {
+        video.addEventListener('loadedmetadata', resolve);
+        video.addEventListener('error', reject);
+      }).catch(() => {
+        alert('Error loading video. Please try a different file.');
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        return;
+      });
+
+      const duration = video.duration;
+
+      // Get the selected output codec
+      let outputMimeType = outputCodecSelect.value;
+      const outputExtension = outputMimeType.includes('mp4') ? 'mp4' : 'webm';
+
+      // Check if the selected output codec is supported
+      if (!MediaRecorder.isTypeSupported(outputMimeType)) {
+        alert(`Output codec ${outputMimeType} is not supported in your browser.`);
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        return;
+      }
+
+      // Capture the video element's stream (includes audio and video)
+      const stream = video.captureStream();
+
+      // Verify that both audio and video tracks are present
+      const audioTracks = stream.getAudioTracks();
+      const videoTracks = stream.getVideoTracks();
+
+      if (audioTracks.length === 0) {
+        alert('No audio track found in the video.');
+        // Optionally proceed without audio
+      }
+
+      if (videoTracks.length === 0) {
+        alert('No video track found in the video.');
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        return;
+      }
+
+      // Set up MediaRecorder with the selected output codec
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: outputMimeType });
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: outputMimeType });
+        const url = URL.createObjectURL(blob);
+        outputVideo.src = url;
+        outputVideo.classList.remove('hidden');
+        downloadLink.href = url;
+        downloadLink.download = `output.${outputExtension}`;
+        downloadLink.classList.remove('hidden');
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        progressContainer.classList.add('hidden');
+        progressBar.style.width = '0%';
+
+        // Show download confirmation
+        notification.textContent = 'Download ready!';
+        notification.classList.remove('hidden');
+        setTimeout(() => {
+          notification.classList.add('hidden');
+        }, 3000);
+      };
+
+      // Error handling for MediaRecorder
+      mediaRecorder.onerror = (e) => {
+        alert('An error occurred during recording: ' + e.error.name);
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        progressContainer.classList.add('hidden');
+        progressBar.style.width = '0%';
+      };
+
+      // Update progress bar
+      progressContainer.classList.remove('hidden');
+      const updateProgress = () => {
+        const progress = (video.currentTime / duration) * 100;
+        progressBar.style.width = progress + '%';
+        if (progress < 100) {
+          requestAnimationFrame(updateProgress);
+        }
+      };
+
+      // Start recording and playback
+      mediaRecorder.start(100); // Collect data every 100ms
+      video.play();
+      updateProgress();
+
+      // When the video ends, stop the recording
+      video.onended = () => {
+        mediaRecorder.stop();
+      };
+
+      // Handle errors during playback
+      video.onerror = (e) => {
+        alert('An error occurred during video playback. Please try a different file.');
+        mediaRecorder.stop();
+        transcodeBtn.disabled = false;
+        transcodeBtn.textContent = 'Transcode';
+        progressContainer.classList.add('hidden');
+        progressBar.style.width = '0%';
+      };
+    });
+
+    // Download link click event to show confirmation
+    downloadLink.addEventListener('click', () => {
+      notification.textContent = 'Download started!';
+      notification.classList.remove('hidden');
+      setTimeout(() => {
+        notification.classList.add('hidden');
+      }, 3000);
+    });
+  </script>
+</body>
+</html>
